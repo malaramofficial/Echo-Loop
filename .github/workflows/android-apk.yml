@@ -1,0 +1,94 @@
+name: Echo Loop Android APK
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-apk:
+    name: Analyze, test and build Android ARM64 APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter 3.35.7
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.35.7"
+          channel: stable
+          cache: true
+
+      - name: Verify toolchain
+        run: |
+          flutter --version
+          dart --version
+          java -version
+          flutter doctor -v
+
+      - name: Create CI environment
+        run: |
+          cat > .ci.env <<'EOF'
+          SUPABASE_URL=
+          SUPABASE_PUBLISHABLE_KEY=
+          GOOGLE_WEB_CLIENT_ID=
+          API_BASE_URL=https://dev.echo-loop.top
+          REVENUECAT_API_KEY_APPLE=
+          REVENUECAT_API_KEY_GOOGLE=
+          REVENUECAT_ENTITLEMENT_ID=
+          EOF
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Generate Dart code
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Unit and widget tests
+        run: flutter test
+
+      - name: Build Android dev release APK
+        run: |
+          flutter build apk \
+            --release \
+            --flavor=dev \
+            --target-platform=android-arm64 \
+            --build-name="$(awk '/^version:/ {print $2}' pubspec.yaml | cut -d+ -f1)" \
+            --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define-from-file=.ci.env
+
+      - name: Verify APK
+        run: |
+          APK="build/app/outputs/flutter-apk/app-dev-release.apk"
+          test -f "$APK"
+          ls -lh "$APK"
+          file "$APK"
+
+      - name: Rename APK
+        run: |
+          VERSION="$(awk '/^version:/ {print $2}' pubspec.yaml | cut -d+ -f1)"
+          cp "build/app/outputs/flutter-apk/app-dev-release.apk" "Echo-Loop-$VERSION-dev-arm64.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-loop-android-apk
+          path: Echo-Loop-*-dev-arm64.apk
+          if-no-files-found: error
+          retention-days: 14
